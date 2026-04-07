@@ -1,0 +1,30 @@
+# Ignore Jupyter Notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Ignore specific root folders
+data/
+checkpoints/
+__pycache__/
+*.pyc
+
+# Ignore wandb folders anywhere in the repo
+wandb/
+
+# ----------------------------------------------------
+# Pretrained Model exclusions and specific inclusions
+# ----------------------------------------------------
+# 1. Ignore everything in pretrained_model
+pretrained_model/*
+
+# 2. Allow the scaling-new-face folder, but ignore its contents...
+!pretrained_model/scaling-new-face/
+pretrained_model/scaling-new-face/*
+# ...except the specific checkpoint
+!pretrained_model/scaling-new-face/00026_simplify_layer1_neural_sheet7_intra_film_scalar_mul_ff_scale_large_large_noise_simple_control/
+
+# 3. Allow the scaling-VH-new-2 folder, but ignore its contents...
+!pretrained_model/scaling-VH-new-2/
+pretrained_model/scaling-VH-new-2/*
+# ...except the specific checkpoint
+!pretrained_model/scaling-VH-new-2/00005_simple_sheet7_simple_control_small_noise/
