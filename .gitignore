@@ -1,6 +1,10 @@
 # Ignore Jupyter Notebooks
 *.ipynb
 .ipynb_checkpoints/
+# Allow specific notebooks
+!Result_natural_face.ipynb
+!toy_model_comparison_cross_star.ipynb
+
 
 # Ignore specific root folders
 data/
