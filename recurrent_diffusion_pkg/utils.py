@@ -352,8 +352,27 @@ def load_lit_model(base_dir, device="cpu", ckpt_name=None):
     ckpt_path = base / ckpt_file
     checkpoint = torch.load(ckpt_path, map_location="cpu")
 
+    def _patch_state_dict(sd, ref_sd):
+        """Expand scalar parameters to match the model's expected shape."""
+        patched = {}
+        for k, v in sd.items():
+            if k in ref_sd and v.shape != ref_sd[k].shape:
+                target = ref_sd[k]
+                # Scalar [1,1,1,1] → per-channel [1,C,1,1]: broadcast-expand
+                if v.numel() == 1 or (v.dim() == target.dim() and
+                                       all(sv == 1 or sv == tv
+                                           for sv, tv in zip(v.shape, target.shape))):
+                    patched[k] = v.expand_as(target).clone()
+                else:
+                    patched[k] = v  # leave mismatches for strict=False to skip
+            else:
+                patched[k] = v
+        return patched
+
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["state_dict"], strict=False)
+        sd = _patch_state_dict(checkpoint["state_dict"],
+                               dict(model.named_parameters()))
+        model.load_state_dict({**checkpoint["state_dict"], **sd}, strict=False)
     elif isinstance(checkpoint, dict) and any(
         k.startswith("model.") or k.startswith("ema_model.")
         for k in checkpoint.keys()
@@ -361,8 +380,10 @@ def load_lit_model(base_dir, device="cpu", ckpt_name=None):
         model.load_state_dict(checkpoint, strict=False)
     else:
         # Raw EMA/full-model state_dict.
-        model.ema_model.load_state_dict(checkpoint, strict=False)
-        model.model.load_state_dict(checkpoint, strict=False)
+        ema_ref = dict(model.ema_model.named_parameters())
+        patched = _patch_state_dict(checkpoint, ema_ref)
+        model.ema_model.load_state_dict({**checkpoint, **patched}, strict=False)
+        model.model.load_state_dict({**checkpoint, **patched}, strict=False)
 
     return config, model
 
@@ -1197,100 +1218,135 @@ def _dominant_color_spatial_decomposition(kernel_chw):
 def get_basis_needle_plot(image_2d):
     """
     Fit a needle-like summary (center, orientation, length) from a 2D basis map.
+
+    Improvements over original:
+    - Tight sigma bounds [0.4, 0.65*ksize] to require envelope localization
+    - 7 random restarts, keep best-MSE fit
+    - R² quality gate (>= 0.30) to reject diffuse/non-Gabor filters
+    - Correct length = sigma_major (was 0.3 * sigma_major², quadratically wrong)
+    - Moment-based FFT orientation estimate (no slow 180-rotation loop)
     """
-    import importlib
+    from scipy.optimize import curve_fit
+    from scipy.signal import hilbert
 
-    scipy_opt = importlib.import_module("scipy.optimize")
-    scipy_nd = importlib.import_module("scipy.ndimage")
-    scipy_sig = importlib.import_module("scipy.signal")
-    curve_fit = scipy_opt.curve_fit
-    rotate = scipy_nd.rotate
-    hilbert = scipy_sig.hilbert
+    kh, kw = image_2d.shape
+    ksize = max(kh, kw)
 
-    center_surround = False
-    pad_width = ((50, 50), (50, 50))
-    padded_image = np.pad(image_2d, pad_width, mode="constant", constant_values=0)
+    # --- Orientation via power-spectrum second moments (no rotation loop) ---
+    padded = np.pad(image_2d, ((50, 50), (50, 50)), mode="constant", constant_values=0)
+    power_spec = np.abs(np.fft.fftshift(np.fft.fft2(padded))) ** 2
+    H, W = power_spec.shape
+    cy, cx = H // 2, W // 2
+    xx_f = np.arange(W, dtype=float) - cx
+    yy_f = np.arange(H, dtype=float) - cy
+    xx_f2d, yy_f2d = np.meshgrid(xx_f, yy_f)
+    # Exclude DC blob to avoid it dominating
+    dc_mask = (np.abs(yy_f2d) > 2) | (np.abs(xx_f2d) > 2)
+    ps = power_spec * dc_mask
+    total = ps.sum() + 1e-12
+    Ixx = float((ps * xx_f2d ** 2).sum() / total)
+    Iyy = float((ps * yy_f2d ** 2).sum() / total)
+    Ixy = float((ps * xx_f2d * yy_f2d).sum() / total)
+    M_ps = np.array([[Ixx, Ixy], [Ixy, Iyy]])
+    _, eigvecs_ps = np.linalg.eigh(M_ps)
+    gdir = eigvecs_ps[:, 1]  # largest eigenvalue → grating direction [x, y]
+    # Edge orientation = perpendicular to grating direction
+    theta = float(np.arctan2(gdir[1], gdir[0]) + np.pi / 2)
 
-    fft_result = np.fft.fft2(padded_image)
-    fft_shifted = np.fft.fftshift(fft_result)
-    amplitude_spectrum = np.abs(fft_shifted)
+    # --- Envelope via 1-D Hilbert on each axis ---
+    envelope = np.abs(hilbert(hilbert(image_2d, axis=0).real, axis=1))
 
-    angles = np.linspace(0, 180, 180, endpoint=False)
-    orientation_tuning = []
-    for angle in angles:
-        rotated_spectrum = rotate(amplitude_spectrum, angle, reshape=False, order=1)
-        energy = np.sum(rotated_spectrum[amplitude_spectrum.shape[0] // 2, :])
-        orientation_tuning.append(energy)
-    orientation_tuning = np.asarray(orientation_tuning)
-    orientation_tuning = orientation_tuning / max(orientation_tuning.max(), 1e-12)
+    xx, yy = np.meshgrid(np.arange(kw), np.arange(kh))
+    max_index = int(np.argmax(envelope))
+    row_index = max_index // kw
+    col_index = max_index % kw
 
-    theta = np.pi / 180 * angles[np.argmax(orientation_tuning)] + np.pi / 2
-    analytic_signal_x = hilbert(image_2d, axis=0)
-    analytic_signal = hilbert(np.real(analytic_signal_x), axis=1)
-    envelope = np.abs(analytic_signal)
+    # --- Gaussian envelope fit with tight localization bounds ---
+    sigma_min = 0.4
+    sigma_max = ksize * 0.65
+    center_slack = 1.5  # allow center up to 1.5 px outside kernel
 
-    x = np.arange(image_2d.shape[1])
-    y = np.arange(image_2d.shape[0])
-    x, y = np.meshgrid(x, y)
+    signal_var = float(np.var(envelope)) + 1e-12
+    best_params = None
+    best_mse = float("inf")
 
-    max_index = np.argmax(envelope)
-    row_index = max_index // envelope.shape[1]
-    col_index = max_index % envelope.shape[1]
+    for restart in range(7):
+        if restart == 0:
+            x0_init = float(col_index)
+            y0_init = float(row_index)
+            sx_init = min(2.0, sigma_max)
+            sy_init = min(2.0, sigma_max)
+        else:
+            x0_init = float(np.random.uniform(kw * 0.15, kw * 0.85))
+            y0_init = float(np.random.uniform(kh * 0.15, kh * 0.85))
+            sx_init = float(np.random.uniform(sigma_min, sigma_max * 0.7))
+            sy_init = float(np.random.uniform(sigma_min, sigma_max * 0.7))
 
-    initial_guess = (0.1, col_index, row_index, 2, 2, 0, 0)
-    bounds = (
-        (-np.inf, -1, -1, -np.inf, -np.inf, -np.inf, -np.inf),
-        (np.inf, 16, 16, np.inf, np.inf, np.inf, np.inf),
-    )
-    successful_fit = True
-    try:
-        params, _ = curve_fit(
-            gaussian_2d_full,
-            (x.ravel(), y.ravel()),
-            envelope.ravel(),
-            p0=initial_guess,
-            bounds=bounds,
-            maxfev=5000,
-        )
-        _, x0, y0, sigma_x, sigma_y, rho, _ = params
+        p0 = (0.1, x0_init, y0_init, sx_init, sy_init, 0.0, 0.0)
+        bounds_lo = (-np.inf, -center_slack, -center_slack,
+                     sigma_min, sigma_min, -0.99, -np.inf)
+        bounds_hi = (np.inf, kw - 1 + center_slack, kh - 1 + center_slack,
+                     sigma_max, sigma_max, 0.99, np.inf)
+        try:
+            params, _ = curve_fit(
+                gaussian_2d_full,
+                (xx.ravel(), yy.ravel()),
+                envelope.ravel(),
+                p0=p0,
+                bounds=(bounds_lo, bounds_hi),
+                maxfev=5000,
+            )
+        except RuntimeError:
+            continue
 
-        cov_matrix = np.array([
+        pred = gaussian_2d_full((xx.ravel(), yy.ravel()), *params)
+        mse = float(np.mean((pred - envelope.ravel()) ** 2))
+        if mse < best_mse:
+            best_mse = mse
+            best_params = params
+
+    # --- Quality gate ---
+    successful_fit = False
+    sigma_x, sigma_y, rho = 2.0, 2.0, 0.0
+    x0, y0 = float(col_index), float(row_index)
+    r2 = 0.0
+
+    if best_params is not None:
+        _, _x0, _y0, _sx, _sy, _rho, _ = best_params
+        _sx, _sy = abs(float(_sx)), abs(float(_sy))
+        r2 = float(1.0 - best_mse / signal_var)
+        if r2 >= 0.30 and max(_sx, _sy) < sigma_max:
+            successful_fit = True
+            x0, y0 = float(_x0), float(_y0)
+            sigma_x, sigma_y, rho = _sx, _sy, float(_rho)
+
+    # --- Length = sigma_major (not 0.3 * sigma_major²) ---
+    if successful_fit:
+        cov = np.array([
             [sigma_x ** 2, rho * sigma_x * sigma_y],
             [rho * sigma_x * sigma_y, sigma_y ** 2],
         ])
-        eigvals, _ = np.linalg.eig(cov_matrix)
-        length = float(0.3 * np.max(eigvals))
-        mean = (float(x0), float(y0))
-    except RuntimeError:
+        length = float(np.sqrt(max(np.linalg.eigvalsh(cov))))
+    else:
         length = 0.0
-        mean = (0.0, 0.0)
-        successful_fit = False
 
+    mean = (x0, y0)
     one_extreme = polar_to_cartesian(length, theta)
     other_extreme = polar_to_cartesian(length, theta + np.pi)
 
-    res = {}
-    res["center_surround"] = center_surround
-    res["successful_fit"] = successful_fit
-    res["theta"] = float(theta)
-    res["length"] = float(length)
-    res["mean"] = mean
-    if successful_fit:
-        res["sigma_x"] = float(sigma_x)
-        res["sigma_y"] = float(sigma_y)
-        res["rho"] = float(rho)
-    else:
-        res["sigma_x"] = 2.0
-        res["sigma_y"] = 2.0
-        res["rho"] = 0.0
-    if not center_surround:
-        res["x"] = np.asarray([one_extreme[0], other_extreme[0]]) + mean[0]
-        res["y"] = np.asarray([one_extreme[1], other_extreme[1]]) + mean[1]
-    else:
-        max_pos = np.unravel_index(np.argmax(np.abs(image_2d)), image_2d.shape)
-        res["x"] = float(max_pos[1])
-        res["y"] = float(max_pos[0])
-    return res
+    return {
+        "center_surround": False,
+        "successful_fit": successful_fit,
+        "theta": theta,
+        "length": length,
+        "mean": mean,
+        "sigma_x": float(sigma_x),
+        "sigma_y": float(sigma_y),
+        "rho": float(rho),
+        "r2": r2,
+        "x": np.asarray([one_extreme[0], other_extreme[0]]) + x0,
+        "y": np.asarray([one_extreme[1], other_extreme[1]]) + y0,
+    }
 
 
 def _estimate_edge_side_colors(kernel_chw, theta, mean_xy):

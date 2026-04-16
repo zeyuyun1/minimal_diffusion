@@ -15,6 +15,9 @@ __pycache__/
 # Ignore wandb folders anywhere in the repo
 wandb/
 
+# Figures (generated outputs)
+figures/
+
 # ----------------------------------------------------
 # Pretrained Model exclusions and specific inclusions
 # ----------------------------------------------------

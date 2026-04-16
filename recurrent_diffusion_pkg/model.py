@@ -464,36 +464,6 @@ class neural_sheet7(nn.Module):
         self.n_levels = len(levels)
         self.noise_embedding = noise_embedding
         
-        # if noise_embedding:
-        #     emb_channels = num_basis[0] * channel_mult_emb
-        #     noise_channels = num_basis[0] * channel_mult_noise
-        #     self.map_noise = PositionalEmbedding(num_channels=noise_channels, endpoint=True)
-        #     self.map_layer0 = nn.Linear(noise_channels, emb_channels, bias=True)
-        #     out_dims = []
-        #     for li, node in enumerate(self.levels):
-        #         c_i = int(node.num_basis)
-        #         if self.control_groups is None:
-        #             d_i = c_i if per_dim_threshold else 1
-        #         else:
-        #             g_i = max(1, int(self.control_groups))
-        #             d_i = min(g_i, c_i)
-        #         out_dims.append(d_i)
-
-        #         # Register channel->group map for grouped control (d_i in (1, c_i) ).
-        #         if 1 < d_i < c_i:
-        #             idx = torch.div(
-        #                 torch.arange(c_i, dtype=torch.long) * d_i,
-        #                 c_i,
-        #                 rounding_mode="floor",
-        #             )
-        #             self.register_buffer(f"control_group_idx_{li}", idx, persistent=True)
-            # self.affines = nn.ModuleList(
-            #     [nn.ModuleList([nn.Linear(emb_channels, d, bias=True) for d in out_dims]) for _ in range(4)]
-            # )
-            # for affine in self.affines:
-            #     for lin in affine:
-            #         nn.init.zeros_(lin.weight)
-            #         nn.init.zeros_(lin.bias)
         if noise_embedding:
             emb_channels = num_basis[0] * channel_mult_emb
             noise_channels = num_basis[0] * channel_mult_noise
@@ -513,28 +483,6 @@ class neural_sheet7(nn.Module):
             if hasattr(lvl, "reset_wnorm"):
                 lvl.reset_wnorm()
 
-
-    # def film_modulation(self, noise_labels, i):
-
-    #     emb = self.map_noise(noise_labels)
-
-    #     emb = emb.reshape(len(noise_labels), 2, -1).flip(1).reshape(len(noise_labels), -1)
-    #     emb = F.relu(self.map_layer0(emb))
-
-    #     c_i = int(self.levels[i].num_basis)
-    #     normalize_emb = []
-    #     for j in range(3):
-    #         ctrl_j = (1 + torch.tanh(self.affines[j][i](emb))) * 2  # [B, d_i]
-    #         d_i = int(ctrl_j.shape[1])
-    #         if d_i == 1 or d_i == c_i:
-    #             pass
-    #         else:
-    #             idx = getattr(self, f"control_group_idx_{i}")
-    #             ctrl_j = ctrl_j[:, idx]  # [B, C]
-    #         normalize_emb.append(ctrl_j)
-
-    #     final_emb = [ctrl.unsqueeze(2).unsqueeze(3).to(ctrl.dtype) for ctrl in normalize_emb]
-    #     return final_emb
     
     def film_modulation(self, noise_labels, i):
         emb = self.map_noise(noise_labels)
@@ -600,11 +548,11 @@ class neural_sheet7(nn.Module):
 
         if infer_mode:
             n0 = n_iters
+        history = [] if return_history else None
         if n0 > 0:
             with torch.no_grad():
-                history = []
                 for _ in range(n0):
-                    features = self.forward_inter(
+                    snaps = self.forward_inter(
                         x,
                         x_in,
                         a,
@@ -618,12 +566,11 @@ class neural_sheet7(nn.Module):
                         measurement=measurement,
                     )
                     if return_history:
-                        history.extend(features)
+                        history.extend(snaps)
 
         a = [ai.detach() if ai is not None else None for ai in a]
-        # print(m1)
         for _ in range(m1):
-            self.forward_inter(
+            snaps = self.forward_inter(
                 x,
                 x_in,
                 a,
@@ -633,20 +580,23 @@ class neural_sheet7(nn.Module):
                 ablate_noi=ablate_noi,
                 ablate_mode=ablate_mode,
                 measurement=measurement,
+                return_history=return_history,
             )
+            if return_history:
+                history.extend(snaps)
 
         decoded = [decoded[i] for i in range(self.n_levels)]
 
+        if return_history:
+            return history
         if return_feature:
-            # if return_history:
-                # return history
             a = [ai.detach().clone() if ai is not None else None for ai in a]
             upstream_grad = [ui.detach().clone() if isinstance(ui, torch.Tensor) else 0 for ui in upstream_grad]
             return {
                 "a": a,
                 "decoded": decoded,
                 "upstream_grad": upstream_grad,
-                "denoised": self.decoder(decoded),
+                "denoised": self.decoder_0(decoded),
             }
         return self.decoder_0(decoded)
 
@@ -664,6 +614,15 @@ class neural_sheet7(nn.Module):
                 T=T,
             )
             a[i] = self._apply_noi_ablation(a[i], i, ablate_noi=ablate_noi, ablate_mode=ablate_mode)
+
+    def _snapshot(self, a, decoded, upstream_grad):
+        """Detached clone of full state for history recording."""
+        return {
+            "a": [ai.detach().clone() if ai is not None else None for ai in a],
+            "decoded": [d.detach().clone() if d is not None else None for d in decoded],
+            "upstream_grad": [u.detach().clone() if isinstance(u, torch.Tensor) else u for u in upstream_grad],
+            "denoised": self.decoder_0([d.detach() if d is not None else None for d in decoded]),
+        }
 
     def forward_inter(
         self,
@@ -684,9 +643,13 @@ class neural_sheet7(nn.Module):
         else:
             res_in = self.encoder_0(x)
 
-        self.forward_dynamics(a,res_in,upstream_grad,decoded,noise_emb_ls,T,ablate_noi,ablate_mode, reverse = False)
-        self.forward_dynamics(a,res_in,upstream_grad,decoded,noise_emb_ls,T,ablate_noi,ablate_mode, reverse = True)
+        self.forward_dynamics(a, res_in, upstream_grad, decoded, noise_emb_ls, T, ablate_noi, ablate_mode, reverse=False)
+        snap1 = self._snapshot(a, decoded, upstream_grad) if return_history else None
+        self.forward_dynamics(a, res_in, upstream_grad, decoded, noise_emb_ls, T, ablate_noi, ablate_mode, reverse=True)
+        snap2 = self._snapshot(a, decoded, upstream_grad) if return_history else None
 
+        if return_history:
+            return [snap1, snap2]
         return None
 
     def _apply_noi_ablation(self, a_i, level_idx, ablate_noi=None, ablate_mode="spatial_mean"):
@@ -1286,7 +1249,8 @@ class neural_sheet6(nn.Module):
             res_m = self.encoder_0(res_m)
         else:
             res_m = None
-
+            
+        # TODO, save two intermediate back below and return it as part of history, list of two state...
         self.forward_dynamics(a,s,res_in,upstream_grad,decoded,noise_emb_ls,T,ablate_noi,ablate_mode, res_m=res_m, reverse = False)
         self.forward_dynamics(a,s,res_in,upstream_grad,decoded,noise_emb_ls,T,ablate_noi,ablate_mode, res_m=res_m, reverse = True)
 
