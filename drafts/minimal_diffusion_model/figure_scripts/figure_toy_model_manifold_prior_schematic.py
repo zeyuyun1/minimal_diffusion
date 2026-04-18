@@ -13,60 +13,229 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from matplotlib.gridspec import GridSpec
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Polygon
+from matplotlib.patches import Polygon
 from torch.utils.data import DataLoader, Dataset
 
 
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "figures"
-PNG_PATH = OUTPUT_DIR / "manifold_hypothesis_polished.png"
-PDF_PATH = OUTPUT_DIR / "manifold_hypothesis_polished.pdf"
+OUTPUT_FILES = {
+    "png": "figure_toy_model_manifold_prior_schematic.png",
+    "pdf": "figure_toy_model_manifold_prior_schematic.pdf",
+}
 
-BG = "#FCFCFB"
-TEXT = "#1E2430"
-MUTED = "#5B6573"
-RED = "#E9857E"
-BLUE = "#5B7CFA"
-GRAY = "#9AA1AA"
-DARK_GRAY = "#59606A"
-BAND_FILL = "#ECEFF4"
-BAND_EDGE = "#B7BDC7"
-GOOD = "#1B7F5B"
-MID = "#C27A00"
-BAD = "#B54708"
+STYLE = {
+    "bg": "#FCFCFB",
+    "text": "#1E2430",
+    "muted": "#5B6573",
+    "red": "#E9857E",
+    "blue": "#5B7CFA",
+    "gray": "#9AA1AA",
+    "dark_gray": "#59606A",
+    "band_fill": "#ECEFF4",
+    "band_edge": "#B7BDC7",
+    "good": "#1B7F5B",
+    "mid": "#C27A00",
+    "bad": "#B54708",
+    "font_family": "DejaVu Sans",
+    "base_font_size": 11,
+    "panel_letter_size": 17,
+    "panel_title_size": 10.9,
+    "panel_subtitle_size": 8.7,
+    "panel_label_size": 10.9,
+    "triangle_color": "#71767F",
+}
 
-THETA_LANDMARKS = np.linspace(0, 2 * math.pi, 28, endpoint=False)
-RADIAL_LANDMARKS = np.linspace(0.08, 0.92, 5)
-DATA_SEED = 0
+LANDMARK_CONFIG = {
+    "theta_count": 28,
+    "radial_start": 0.08,
+    "radial_stop": 0.92,
+    "radial_count": 5,
+}
+
+GEOMETRY_CONFIG = {
+    "ellipse_axes": {
+        "a_inner": 0.95,
+        "a_outer": 1.85,
+        "b_inner": 0.30,
+        "b_outer": 0.82,
+    },
+    "band_axes": {
+        "xlim": (-1.88, 1.88),
+        "ylim": (-1.05, 1.05),
+    },
+    "star_axes": {
+        "min_extent": 1.42,
+        "limit_scale": 1.00,
+    },
+    "ring_axes": {
+        "base_radius": 1.5,
+        "min_extent": 1.5,
+        "limit_scale": 1.02,
+        "margin": 0.2,
+    },
+    "triangle": {
+        "b_gap_frac": 0.36,
+        "c_gap_frac": 0.34,
+        "d_gap_frac": 0.32,
+        "max_width": 0.0080,
+    },
+}
+
+PIPELINE_CONFIG = {
+    "seed": 0,
+    "dataset": {
+        "num_samples": 10000,
+        "d_dim": 128,
+        "std_mu": 0.1,
+        "std_sigma": 0.05,
+        "major_amplitude": 1.2,
+        "minor_amplitude": 0.7,
+        "sigma_base_min": 0.1,
+        "sigma_base_span": 0.3,
+        "sigma_min": 0.15,
+        "sigma_max": 0.45,
+    },
+    "dataloader": {
+        "batch_size": 16,
+        "drop_last": True,
+    },
+    "dictionary": {
+        "mu_steps": 40,
+        "sigma_steps": 5,
+    },
+    "model": {
+        "eta": 0.01,
+        "lam": -0.1,
+        "learning_horizontal": False,
+    },
+    "inference_steps": 5000,
+    "independent_batch": {
+        "batch_size": 4,
+        "h_blades": 4,
+        "amplitude": 1.0,
+        "sigma_min": 0.15,
+        "sigma_span": 0.3,
+    },
+    "example_idx": 4,
+    "viz_idx": 1,
+    "panel_a_examples": 8,
+}
+
+LAYOUT_CONFIG = {
+    "figure": {
+        "size": (14.8, 4.25),
+    },
+    "outer_grid": {
+        "height_ratios": [0.462, 0.538],
+        "hspace": 0.0,
+        "left": 0.04,
+        "right": 0.985,
+        "top": 0.992,
+        "bottom": 0.015,
+    },
+    "top_grid": {
+        "width_ratios": [2.36, 4.40, 4.42],
+        "wspace": 0.09,
+    },
+    "panel_a": {
+        "header_height_ratios": [0.026, 1.0],
+        "header_hspace": 0.0,
+        "gallery_shape": (2, 4),
+        "gallery_wspace": 0.045,
+        "gallery_hspace": -0.50,
+    },
+    "panel_b": {
+        "height_ratios": [0.026, 0.082, 1.0],
+        "hspace": 0.0,
+        "content_width_ratios": [1.78, 0.92],
+        "content_wspace": 0.08,
+    },
+    "panel_c": {
+        "height_ratios": [0.026, 0.082, 1.0],
+        "hspace": 0.0,
+        "content_width_ratios": [1.84, 1.01],
+        "content_wspace": 0.07,
+    },
+    "panel_d": {
+        "title_y": 0.99,
+        "content_grid_wspace": 0.11,
+        "panel_height_ratios": [0.145, 1.0, 0.09],
+        "panel_hspace": 0.0,
+        "content_width_ratios": [1.72, 0.98],
+        "content_wspace": 0.08,
+    },
+}
+
+PNG_PATH = OUTPUT_DIR / OUTPUT_FILES["png"]
+PDF_PATH = OUTPUT_DIR / OUTPUT_FILES["pdf"]
+
+BG = STYLE["bg"]
+TEXT = STYLE["text"]
+MUTED = STYLE["muted"]
+RED = STYLE["red"]
+BLUE = STYLE["blue"]
+GRAY = STYLE["gray"]
+DARK_GRAY = STYLE["dark_gray"]
+BAND_FILL = STYLE["band_fill"]
+BAND_EDGE = STYLE["band_edge"]
+GOOD = STYLE["good"]
+MID = STYLE["mid"]
+BAD = STYLE["bad"]
+
+THETA_LANDMARKS = np.linspace(0, 2 * math.pi, LANDMARK_CONFIG["theta_count"], endpoint=False)
+RADIAL_LANDMARKS = np.linspace(
+    LANDMARK_CONFIG["radial_start"],
+    LANDMARK_CONFIG["radial_stop"],
+    LANDMARK_CONFIG["radial_count"],
+)
+DATA_SEED = PIPELINE_CONFIG["seed"]
 
 
 class AsymmetricCrossDataset(Dataset):
-    def __init__(self, num_samples=5000, d_dim=128):
-        self.num_samples = num_samples
-        self.d_dim = d_dim
-        self.grid = torch.linspace(0, 2 * math.pi, d_dim + 1)[:-1]
+    def __init__(self, num_samples=None, d_dim=None):
+        dataset_cfg = PIPELINE_CONFIG["dataset"]
+        self.num_samples = dataset_cfg["num_samples"] if num_samples is None else num_samples
+        self.d_dim = dataset_cfg["d_dim"] if d_dim is None else d_dim
+        self.grid = torch.linspace(0, 2 * math.pi, self.d_dim + 1)[:-1]
 
-        self.std_mu = 0.1
-        self.std_sigma = 0.05
+        self.std_mu = dataset_cfg["std_mu"]
+        self.std_sigma = dataset_cfg["std_sigma"]
 
-        mu_base = torch.rand(num_samples, 1) * 2 * math.pi
-        sigma_base_major = 0.1 + 0.3 * torch.rand(num_samples, 1)
-        sigma_base_minor = 0.1 + 0.3 * torch.rand(num_samples, 1)
+        mu_base = torch.rand(self.num_samples, 1) * 2 * math.pi
+        sigma_base_major = dataset_cfg["sigma_base_min"] + dataset_cfg["sigma_base_span"] * torch.rand(self.num_samples, 1)
+        sigma_base_minor = dataset_cfg["sigma_base_min"] + dataset_cfg["sigma_base_span"] * torch.rand(self.num_samples, 1)
 
-        mu_n = (mu_base + torch.randn(num_samples, 1) * self.std_mu) % (2 * math.pi)
-        sigma_n = torch.clamp(sigma_base_major + torch.randn(num_samples, 1) * self.std_sigma, min=0.15, max=0.45)
-        scale_n = torch.full((num_samples, 1), 1.2)
+        mu_n = (mu_base + torch.randn(self.num_samples, 1) * self.std_mu) % (2 * math.pi)
+        sigma_n = torch.clamp(
+            sigma_base_major + torch.randn(self.num_samples, 1) * self.std_sigma,
+            min=dataset_cfg["sigma_min"],
+            max=dataset_cfg["sigma_max"],
+        )
+        scale_n = torch.full((self.num_samples, 1), dataset_cfg["major_amplitude"])
 
-        mu_s = (mu_base + math.pi + torch.randn(num_samples, 1) * self.std_mu) % (2 * math.pi)
-        sigma_s = torch.clamp(sigma_base_major + torch.randn(num_samples, 1) * self.std_sigma, min=0.15, max=0.45)
-        scale_s = torch.full((num_samples, 1), 1.2)
+        mu_s = (mu_base + math.pi + torch.randn(self.num_samples, 1) * self.std_mu) % (2 * math.pi)
+        sigma_s = torch.clamp(
+            sigma_base_major + torch.randn(self.num_samples, 1) * self.std_sigma,
+            min=dataset_cfg["sigma_min"],
+            max=dataset_cfg["sigma_max"],
+        )
+        scale_s = torch.full((self.num_samples, 1), dataset_cfg["major_amplitude"])
 
-        mu_e = (mu_base + math.pi / 2 + torch.randn(num_samples, 1) * self.std_mu) % (2 * math.pi)
-        sigma_e = torch.clamp(sigma_base_minor + torch.randn(num_samples, 1) * self.std_sigma, min=0.15, max=0.45)
-        scale_e = torch.full((num_samples, 1), 0.7)
+        mu_e = (mu_base + math.pi / 2 + torch.randn(self.num_samples, 1) * self.std_mu) % (2 * math.pi)
+        sigma_e = torch.clamp(
+            sigma_base_minor + torch.randn(self.num_samples, 1) * self.std_sigma,
+            min=dataset_cfg["sigma_min"],
+            max=dataset_cfg["sigma_max"],
+        )
+        scale_e = torch.full((self.num_samples, 1), dataset_cfg["minor_amplitude"])
 
-        mu_w = (mu_base - math.pi / 2 + torch.randn(num_samples, 1) * self.std_mu) % (2 * math.pi)
-        sigma_w = torch.clamp(sigma_base_minor + torch.randn(num_samples, 1) * self.std_sigma, min=0.15, max=0.45)
-        scale_w = torch.full((num_samples, 1), 0.7)
+        mu_w = (mu_base - math.pi / 2 + torch.randn(self.num_samples, 1) * self.std_mu) % (2 * math.pi)
+        sigma_w = torch.clamp(
+            sigma_base_minor + torch.randn(self.num_samples, 1) * self.std_sigma,
+            min=dataset_cfg["sigma_min"],
+            max=dataset_cfg["sigma_max"],
+        )
+        scale_w = torch.full((self.num_samples, 1), dataset_cfg["minor_amplitude"])
 
         coords_n = torch.cat([mu_n, sigma_n, scale_n], dim=1)
         coords_s = torch.cat([mu_s, sigma_s, scale_s], dim=1)
@@ -102,7 +271,7 @@ class AsymmetricCrossDataset(Dataset):
 
     def get_grid_samples(self, mu_steps=72, sigma_steps=10):
         mu_vals = torch.linspace(0, 2 * math.pi, mu_steps + 1)[:-1]
-        sigma_vals = torch.linspace(0.15, 0.45, sigma_steps)
+        sigma_vals = torch.linspace(PIPELINE_CONFIG["dataset"]["sigma_min"], PIPELINE_CONFIG["dataset"]["sigma_max"], sigma_steps)
 
         mu_grid, sigma_grid = torch.meshgrid(mu_vals, sigma_vals, indexing="ij")
         mu_flat = mu_grid.flatten().unsqueeze(1)
@@ -156,43 +325,55 @@ def run_inference(model, batch, steps=5000):
 def notebook_pipeline_outputs(seed=DATA_SEED):
     torch.manual_seed(seed)
 
-    dataset = AsymmetricCrossDataset(num_samples=10000, d_dim=128)
-    dataloader_generator = torch.Generator().manual_seed(seed)
-    dataloader = DataLoader(dataset, batch_size=16, shuffle=True, drop_last=True, generator=dataloader_generator)
+    dataset_cfg = PIPELINE_CONFIG["dataset"]
+    dataloader_cfg = PIPELINE_CONFIG["dataloader"]
+    dict_cfg = PIPELINE_CONFIG["dictionary"]
+    model_cfg = PIPELINE_CONFIG["model"]
+    independent_cfg = PIPELINE_CONFIG["independent_batch"]
 
-    grid_dictionary, grid_coords = dataset.get_grid_samples(mu_steps=40, sigma_steps=5)
+    dataset = AsymmetricCrossDataset(num_samples=dataset_cfg["num_samples"], d_dim=dataset_cfg["d_dim"])
+    dataloader_generator = torch.Generator().manual_seed(seed)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=dataloader_cfg["batch_size"],
+        shuffle=True,
+        drop_last=dataloader_cfg["drop_last"],
+        generator=dataloader_generator,
+    )
+
+    grid_dictionary, grid_coords = dataset.get_grid_samples(mu_steps=dict_cfg["mu_steps"], sigma_steps=dict_cfg["sigma_steps"])
     sc_net = SCInference(
-        data_dim=128,
+        data_dim=dataset_cfg["d_dim"],
         hidden_dim=grid_dictionary.shape[0],
-        eta=0.01,
-        lam=-0.1,
-        learning_horizontal=False,
+        eta=model_cfg["eta"],
+        lam=model_cfg["lam"],
+        learning_horizontal=model_cfg["learning_horizontal"],
     )
     sc_net.Phi.weight.data = grid_dictionary.T.clone() * 0.5
 
     sample_batch_0, manifold_indices_0 = next(iter(dataloader))
-    a_recon, recon_recon = run_inference(sc_net, sample_batch_0)
+    a_recon, recon_recon = run_inference(sc_net, sample_batch_0, steps=PIPELINE_CONFIG["inference_steps"])
 
-    batch_size = 4
-    h_blades = 4
+    batch_size = independent_cfg["batch_size"]
+    h_blades = independent_cfg["h_blades"]
     independent_components = []
     coord_list = []
     for _ in range(h_blades):
         mu_rnd = torch.rand(batch_size, 1) * (2 * math.pi)
-        sigma_rnd = 0.15 + 0.3 * torch.rand(batch_size, 1)
-        amp_rnd = torch.ones(batch_size, 1)
+        sigma_rnd = independent_cfg["sigma_min"] + independent_cfg["sigma_span"] * torch.rand(batch_size, 1)
+        amp_rnd = torch.full((batch_size, 1), independent_cfg["amplitude"])
         independent_components.append((mu_rnd, sigma_rnd, amp_rnd))
         coord_list.append(torch.cat([mu_rnd, sigma_rnd, amp_rnd], dim=1))
     ind_batch = dataset.generate(independent_components)
     ind_coords = torch.stack(coord_list, dim=1)
-    a_geo, recon_geo = run_inference(sc_net, ind_batch)
+    a_geo, recon_geo = run_inference(sc_net, ind_batch, steps=PIPELINE_CONFIG["inference_steps"])
 
     with torch.no_grad():
         a_shuffle = a_geo[:, torch.randperm(len(a_geo[1]))]
         recon_shuffle = sc_net.Phi(a_shuffle)
 
     sample_batch_1, manifold_indices_1 = next(iter(dataloader))
-    a_full, recon_full = run_inference(sc_net, sample_batch_1)
+    a_full, recon_full = run_inference(sc_net, sample_batch_1, steps=PIPELINE_CONFIG["inference_steps"])
 
     return {
         "dataset": dataset,
@@ -238,14 +419,14 @@ def draw_star(ax, blades, color, *, lw=2.6, alpha=1.0, linestyle="-", zorder=3):
     x, y = star_outline(blades)
     ax.plot(x, y, color=color, lw=lw, alpha=alpha, linestyle=linestyle, zorder=zorder)
     ax.set_aspect("equal")
-    extent = max(np.abs(x).max(), np.abs(y).max(), 1.42)
-    lim = 1.00 * extent
+    extent = max(np.abs(x).max(), np.abs(y).max(), GEOMETRY_CONFIG["star_axes"]["min_extent"])
+    lim = GEOMETRY_CONFIG["star_axes"]["limit_scale"] * extent
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
     ax.axis("off")
 
 
-def ring_xy(signal, grid, base_radius=1.5):
+def ring_xy(signal, grid, base_radius=GEOMETRY_CONFIG["ring_axes"]["base_radius"]):
     signal = np.asarray(signal, dtype=float)
     grid = np.asarray(grid, dtype=float)
     signal_closed = np.append(signal, signal[0])
@@ -261,8 +442,8 @@ def draw_ring_signal(ax, signal, grid, color, *, lw=2.6, alpha=1.0, linestyle="-
     ax.plot(x, y, color=color, lw=lw, alpha=alpha, linestyle=linestyle, zorder=zorder)
     ax.set_aspect("equal")
     if limits is None:
-        extent = max(np.abs(x).max(), np.abs(y).max(), 1.5)
-        lim = 1.02 * extent
+        extent = max(np.abs(x).max(), np.abs(y).max(), GEOMETRY_CONFIG["ring_axes"]["min_extent"])
+        lim = GEOMETRY_CONFIG["ring_axes"]["limit_scale"] * extent
     else:
         lim = limits
     ax.set_xlim(-lim, lim)
@@ -280,8 +461,10 @@ def signal_from_components(components, grid):
 
 
 def ellipse_axes(radial_pos):
-    a_inner, a_outer = 0.95, 1.85
-    b_inner, b_outer = 0.30, 0.82
+    a_inner = GEOMETRY_CONFIG["ellipse_axes"]["a_inner"]
+    a_outer = GEOMETRY_CONFIG["ellipse_axes"]["a_outer"]
+    b_inner = GEOMETRY_CONFIG["ellipse_axes"]["b_inner"]
+    b_outer = GEOMETRY_CONFIG["ellipse_axes"]["b_outer"]
     a = a_inner + radial_pos * (a_outer - a_inner)
     b = b_inner + radial_pos * (b_outer - b_inner)
     return a, b
@@ -343,8 +526,8 @@ def draw_band(ax, *, theta_landmarks=None, radial_landmarks=None, show_landmarks
             ys.extend(b * np.sin(theta_landmarks))
         ax.scatter(xs, ys, s=9, color=DARK_GRAY, alpha=0.78, linewidths=0, zorder=2)
 
-    ax.set_xlim(-1.88, 1.88)
-    ax.set_ylim(-1.05, 1.05)
+    ax.set_xlim(*GEOMETRY_CONFIG["band_axes"]["xlim"])
+    ax.set_ylim(*GEOMETRY_CONFIG["band_axes"]["ylim"])
     ax.set_aspect("equal")
     ax.axis("off")
 
@@ -376,9 +559,19 @@ def blades_to_spikes(blades):
     return [(mu, sigma_to_band(sigma), 0.95 * amplitude) for mu, sigma, amplitude in blades]
 
 
-def panel_heading(ax, letter, title, subtitle=None, *, title_fs=12.8, subtitle_fs=8.7, center_title=False):
+def panel_heading(
+    ax,
+    letter,
+    title,
+    subtitle=None,
+    *,
+    title_fs=STYLE["panel_title_size"],
+    subtitle_fs=STYLE["panel_subtitle_size"],
+    letter_fs=STYLE["panel_letter_size"],
+    center_title=False,
+):
     ax.axis("off")
-    ax.text(0.00, 0.90, letter, fontsize=17, fontweight="bold", color=TEXT, ha="left", va="top")
+    ax.text(0.00, 0.90, letter, fontsize=letter_fs, fontweight="bold", color=TEXT, ha="left", va="top")
     ax.text(0.50 if center_title else 0.085, 0.90, title, fontsize=title_fs, fontweight="semibold", color=TEXT, ha="center" if center_title else "left", va="top")
     if subtitle:
         ax.text(0.00, 0.36, subtitle, fontsize=subtitle_fs, color=MUTED, ha="left", va="top", linespacing=1.15)
@@ -422,13 +615,13 @@ def data_x_to_fig(fig, ax, x, y=0.0):
     return fig.transFigure.inverted().transform(xy)[0]
 
 
-def arrow_between_content(fig, ax_left, ax_right, left_x, right_x, *, color="#71767F", gap_frac=0.34, y_shift=0.0):
+def arrow_between_content(fig, ax_left, ax_right, left_x, right_x, *, color=STYLE["triangle_color"], gap_frac=0.34, y_shift=0.0):
     left_box = ax_left.get_position()
     right_box = ax_right.get_position()
     y_mid = 0.5 * (left_box.y0 + left_box.y1) + y_shift * (left_box.y1 - left_box.y0)
     gap = right_x - left_x
     x_mid = 0.5 * (left_x + right_x)
-    tri_w = min(gap_frac * gap, 0.0080)
+    tri_w = min(gap_frac * gap, GEOMETRY_CONFIG["triangle"]["max_width"])
     aspect = fig.get_figwidth() / fig.get_figheight()
     tri_h = tri_w * aspect * (2.0 / math.sqrt(3.0))
     triangle = Polygon(
@@ -456,7 +649,7 @@ def label_chip(ax, title):
         transform=ax.transAxes,
         ha="center",
         va="center",
-        fontsize=10.9,
+        fontsize=STYLE["panel_label_size"],
         color=TEXT,
         fontweight="semibold",
         linespacing=1.0,
@@ -594,34 +787,46 @@ def notebook_sparse_spikes(grid_coords, sparse_code, sigma_min, sigma_max, thres
     return spikes
 
 
-def ring_limit_from_batch(batch_data, base_radius=1.5, margin=0.2):
+def ring_limit_from_batch(
+    batch_data,
+    base_radius=GEOMETRY_CONFIG["ring_axes"]["base_radius"],
+    margin=GEOMETRY_CONFIG["ring_axes"]["margin"],
+):
     return base_radius + float(np.max(batch_data)) + margin
 
 
 def main():
+    figure_cfg = LAYOUT_CONFIG["figure"]
+    outer_cfg = LAYOUT_CONFIG["outer_grid"]
+    top_cfg = LAYOUT_CONFIG["top_grid"]
+    panel_a_cfg = LAYOUT_CONFIG["panel_a"]
+    panel_b_cfg = LAYOUT_CONFIG["panel_b"]
+    panel_c_cfg = LAYOUT_CONFIG["panel_c"]
+    panel_d_cfg = LAYOUT_CONFIG["panel_d"]
+
     plt.rcParams.update(
         {
             "figure.facecolor": BG,
             "axes.facecolor": BG,
             "savefig.facecolor": BG,
-            "font.family": "DejaVu Sans",
-            "font.size": 11,
+            "font.family": STYLE["font_family"],
+            "font.size": STYLE["base_font_size"],
         }
     )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    fig = plt.figure(figsize=(14.8, 4.25))
+    fig = plt.figure(figsize=figure_cfg["size"])
     outer = GridSpec(
         2,
         1,
         figure=fig,
-        height_ratios=[0.462, 0.538],
-        hspace=0.0,
-        left=0.04,
-        right=0.985,
-        top=0.992,
-        bottom=0.015,
+        height_ratios=outer_cfg["height_ratios"],
+        hspace=outer_cfg["hspace"],
+        left=outer_cfg["left"],
+        right=outer_cfg["right"],
+        top=outer_cfg["top"],
+        bottom=outer_cfg["bottom"],
     )
 
     outputs = notebook_pipeline_outputs()
@@ -629,10 +834,10 @@ def main():
     grid_coords = outputs["grid_coords"]
     theta_landmarks, radial_landmarks, sigma_min, sigma_max = notebook_landmarks(grid_coords)
 
-    panel_a_signals = outputs["sample_batch_0"][:8] - 1.0
+    panel_a_signals = outputs["sample_batch_0"][: PIPELINE_CONFIG["panel_a_examples"]] - 1.0
     panel_a_limit = ring_limit_from_batch(panel_a_signals)
 
-    example_idx = 4
+    example_idx = PIPELINE_CONFIG["example_idx"]
     true_query = outputs["manifold_indices_0"][example_idx]
     true_signal = outputs["sample_batch_0"][example_idx] - 1.0
     recon_signal = outputs["recon_recon"][example_idx] - 1.0
@@ -640,7 +845,7 @@ def main():
     recon_spikes = notebook_sparse_spikes(grid_coords, outputs["a_recon"][example_idx], sigma_min, sigma_max)
     panel_c_limit = ring_limit_from_batch(np.stack([true_signal, recon_signal], axis=0))
 
-    viz_idx = 1
+    viz_idx = PIPELINE_CONFIG["viz_idx"]
     d_specs = [
         (
             "Factorial",
@@ -659,30 +864,34 @@ def main():
         ),
     ]
 
-    top = outer[0, 0].subgridspec(1, 3, width_ratios=[2.36, 4.40, 4.42], wspace=0.09)
+    top = outer[0, 0].subgridspec(1, 3, width_ratios=top_cfg["width_ratios"], wspace=top_cfg["wspace"])
 
-    panel_a = top[0, 0].subgridspec(2, 1, height_ratios=[0.026, 1.0], hspace=0.00)
+    panel_a = top[0, 0].subgridspec(2, 1, height_ratios=panel_a_cfg["header_height_ratios"], hspace=panel_a_cfg["header_hspace"])
     panel_a_head = fig.add_subplot(panel_a[0, 0])
-    panel_heading(panel_a_head, "A", "Data distribution", title_fs=10.9, center_title=True)
-    sub_a = panel_a[1, 0].subgridspec(2, 4, wspace=0.045, hspace=-0.50)
+    panel_heading(panel_a_head, "A", "Data distribution", title_fs=STYLE["panel_title_size"], center_title=True)
+    sub_a = panel_a[1, 0].subgridspec(
+        *panel_a_cfg["gallery_shape"],
+        wspace=panel_a_cfg["gallery_wspace"],
+        hspace=panel_a_cfg["gallery_hspace"],
+    )
     for idx, signal in enumerate(panel_a_signals):
-        ax = fig.add_subplot(sub_a[idx // 4, idx % 4])
+        ax = fig.add_subplot(sub_a[idx // panel_a_cfg["gallery_shape"][1], idx % panel_a_cfg["gallery_shape"][1]])
         draw_ring_signal(ax, signal, signal_grid, RED, lw=2.0, alpha=0.96, limits=panel_a_limit)
 
-    panel_b = top[0, 1].subgridspec(3, 1, height_ratios=[0.026, 0.082, 1.0], hspace=0.00)
+    panel_b = top[0, 1].subgridspec(3, 1, height_ratios=panel_b_cfg["height_ratios"], hspace=panel_b_cfg["hspace"])
     panel_b_head = fig.add_subplot(panel_b[0, 0])
-    panel_heading(panel_b_head, "B", "Latent manifold", title_fs=10.9, center_title=True)
-    sub_b = panel_b[2, 0].subgridspec(1, 2, width_ratios=[1.78, 0.92], wspace=0.08)
+    panel_heading(panel_b_head, "B", "Latent manifold", title_fs=STYLE["panel_title_size"], center_title=True)
+    sub_b = panel_b[2, 0].subgridspec(1, 2, width_ratios=panel_b_cfg["content_width_ratios"], wspace=panel_b_cfg["content_wspace"])
     ax_b_band = fig.add_subplot(sub_b[0, 0])
     draw_band(ax_b_band, theta_landmarks=theta_landmarks, radial_landmarks=radial_landmarks, show_landmarks=False, show_centerline=False)
     draw_spikes(ax_b_band, true_spikes, RED, lw=2.4, length_scale=1.0)
     ax_b_star = fig.add_subplot(sub_b[0, 1])
     draw_ring_signal(ax_b_star, true_signal, signal_grid, RED, lw=2.8, limits=panel_c_limit)
 
-    panel_c = top[0, 2].subgridspec(3, 1, height_ratios=[0.026, 0.082, 1.0], hspace=0.00)
+    panel_c = top[0, 2].subgridspec(3, 1, height_ratios=panel_c_cfg["height_ratios"], hspace=panel_c_cfg["hspace"])
     panel_c_head = fig.add_subplot(panel_c[0, 0])
-    panel_heading(panel_c_head, "C", "Sparse coding reconstruction", title_fs=10.9, center_title=True)
-    sub_c = panel_c[2, 0].subgridspec(1, 2, width_ratios=[1.84, 1.01], wspace=0.07)
+    panel_heading(panel_c_head, "C", "Sparse coding reconstruction", title_fs=STYLE["panel_title_size"], center_title=True)
+    sub_c = panel_c[2, 0].subgridspec(1, 2, width_ratios=panel_c_cfg["content_width_ratios"], wspace=panel_c_cfg["content_wspace"])
     ax_c_band = fig.add_subplot(sub_c[0, 0])
     draw_band(ax_c_band, theta_landmarks=theta_landmarks, radial_landmarks=radial_landmarks, show_landmarks=True, show_centerline=False)
     draw_spikes(ax_c_band, true_spikes, RED, lw=2.1, alpha=0.95, length_scale=1.0)
@@ -693,16 +902,16 @@ def main():
 
     panel_d_anchor = fig.add_subplot(outer[1, 0])
     panel_d_anchor.axis("off")
-    panel_d_anchor.text(0.00, 0.99, "D", fontsize=17, fontweight="bold", color=TEXT, ha="left", va="top")
-    panel_d_anchor.text(0.50, 0.99, "Sparse coding priors", fontsize=10.9, fontweight="semibold", color=TEXT, ha="center", va="top")
-    sub_d = outer[1, 0].subgridspec(1, 3, wspace=0.11)
+    panel_d_anchor.text(0.00, panel_d_cfg["title_y"], "D", fontsize=STYLE["panel_letter_size"], fontweight="bold", color=TEXT, ha="left", va="top")
+    panel_d_anchor.text(0.50, panel_d_cfg["title_y"], "Sparse coding priors", fontsize=STYLE["panel_title_size"], fontweight="semibold", color=TEXT, ha="center", va="top")
+    sub_d = outer[1, 0].subgridspec(1, 3, wspace=panel_d_cfg["content_grid_wspace"])
 
     d_band_axes = []
     d_star_axes = []
     for idx, (title, spikes, generated_signal) in enumerate(d_specs):
         panel_limit = ring_limit_from_batch(np.expand_dims(generated_signal, axis=0))
-        panel = sub_d[0, idx].subgridspec(3, 1, height_ratios=[0.145, 1.0, 0.09], hspace=0.00)
-        content = panel[1, 0].subgridspec(1, 2, width_ratios=[1.72, 0.98], wspace=0.08)
+        panel = sub_d[0, idx].subgridspec(3, 1, height_ratios=panel_d_cfg["panel_height_ratios"], hspace=panel_d_cfg["panel_hspace"])
+        content = panel[1, 0].subgridspec(1, 2, width_ratios=panel_d_cfg["content_width_ratios"], wspace=panel_d_cfg["content_wspace"])
         ax_band = fig.add_subplot(content[0, 0])
         draw_band(ax_band, theta_landmarks=theta_landmarks, radial_landmarks=radial_landmarks, show_landmarks=True, show_centerline=False)
         draw_spikes(ax_band, spikes, BLUE, lw=1.95, length_scale=1.0)
@@ -723,7 +932,7 @@ def main():
         ax_b_star,
         data_x_to_fig(fig, ax_b_band, 1.85),
         data_x_to_fig(fig, ax_b_star, float(np.min(b_x))),
-        gap_frac=0.36,
+        gap_frac=GEOMETRY_CONFIG["triangle"]["b_gap_frac"],
     )
     arrow_between_content(
         fig,
@@ -731,7 +940,7 @@ def main():
         ax_c_star,
         data_x_to_fig(fig, ax_c_band, 1.85),
         data_x_to_fig(fig, ax_c_star, float(min(np.min(c_true_x), np.min(c_recon_x)))),
-        gap_frac=0.34,
+        gap_frac=GEOMETRY_CONFIG["triangle"]["c_gap_frac"],
     )
     for (ax_band, ax_star), (_, _, generated_signal) in zip(zip(d_band_axes, d_star_axes), d_specs):
         d_x, _ = ring_xy(generated_signal, signal_grid)
@@ -741,7 +950,7 @@ def main():
             ax_star,
             data_x_to_fig(fig, ax_band, 1.85),
             data_x_to_fig(fig, ax_star, float(np.min(d_x))),
-            gap_frac=0.32,
+            gap_frac=GEOMETRY_CONFIG["triangle"]["d_gap_frac"],
         )
 
     fig.savefig(PNG_PATH, dpi=300, bbox_inches="tight")
