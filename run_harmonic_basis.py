@@ -21,6 +21,7 @@ figures/harmonic_basis_UNet.png
 figures/harmonic_basis_comparison.png   (side-by-side top row)
 """
 
+import argparse
 from pathlib import Path
 import torch
 import numpy as np
@@ -31,22 +32,29 @@ import matplotlib.colors as mcolors
 
 from recurrent_diffusion_pkg.utils import load_lit_model, build_loaders_from_config
 
-# ── Config ────────────────────────────────────────────────────────────────────
-SHEET_DIR = Path("/home/zeyu/recurrent_diffusion_minimal/pretrained_model/"
-                 "scaling-new-face/00026_simplify_layer1_neural_sheet7_intra_"
-                 "film_scalar_mul_ff_scale_large_large_noise_simple_control")
-UNET_DIR  = Path("/home/zeyu/recurrent_diffusion_minimal/pretrained_model/"
-                 "scaling-new-face/00006_layer1_unet_small_edm_large_noattn")
 
-NOISE_LEVEL    = 0.2
-N_ITERS_SHEET  = 4       # recurrent iters for sheet7 during eigvec computation
-K              = 20      # number of eigenvectors to visualise
-N_OVERSAMPLING = 10      # extra random vectors for accuracy
-N_POWER_ITER   = 2       # power iteration refinement steps
-VAL_SEED       = 0       # for reproducibility
+def parse_args():
+    p = argparse.ArgumentParser(description="Compute harmonic basis (Jacobian eigenvectors) of denoiser")
+    p.add_argument("--unet_dir", type=str,
+                   default="pretrained_model/scaling-new-face/00029_layer1_unet_small_edm_large_noattn",
+                   help="Path to UNet model directory")
+    p.add_argument("--sheet_dir", type=str,
+                   default="pretrained_model/scaling-new-face/00024_simplify_layer1_neural_sheet7_intra_film_scalar_mul_ff_scale_large_large_noise",
+                   help="Path to neural_sheet7 model directory")
+    p.add_argument("--unet_only", action="store_true",
+                   help="Only run UNet (skip neural_sheet7 and comparison plot)")
+    p.add_argument("--out_dir",       type=str,   default="figures")
+    p.add_argument("--noise_level",   type=float, default=0.3)
+    p.add_argument("--n_iters_sheet", type=int,   default=4)
+    p.add_argument("--k",             type=int,   default=100,  help="Number of eigenvectors")
+    p.add_argument("--k_plot_stride", type=int,   default=4,    help="Plot every Nth eigenvector")
+    p.add_argument("--n_oversampling",type=int,   default=10)
+    p.add_argument("--n_power_iter",  type=int,   default=10)
+    p.add_argument("--val_seed",      type=int,   default=0)
+    p.add_argument("--val_img_idx",   type=int,   default=2,    help="Which image from val batch to use")
+    return p.parse_args()
 
-OUT_DIR = Path("figures")
-OUT_DIR.mkdir(exist_ok=True)
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -125,16 +133,19 @@ def randomized_svd_denoiser(model_fn, x_noisy, k=20, n_oversampling=10,
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
 
-def plot_eigvecs(clean, eigvecs, eigvals, label, out_path, img_shape):
+def plot_eigvecs(clean, eigvecs, eigvals, label, out_path, img_shape,
+                 stride=1, noise_level=0.3):
     """
-    3×7 grid: clean image in slot 0, top-K eigenvectors in slots 1..K.
+    Grid: clean image in slot 0, eigenvectors sampled every `stride` in slots 1+.
     eigvecs: (n, K)  eigvals: (K,)  img_shape: (C, H, W)
     """
     C, H, W = img_shape
-    k = eigvecs.shape[1]
+    indices = list(range(0, eigvecs.shape[1], stride))[:24]  # cap at 24 so grid is 5×5
+    k_plot  = len(indices)
 
-    ncols, nrows = 7, 3
-    fig, axs = plt.subplots(nrows, ncols, figsize=(ncols * 3, nrows * 3))
+    ncols = 5
+    nrows = 5   # 1 clean + 24 eigenvectors = 25 slots
+    fig, axs = plt.subplots(nrows, ncols, figsize=(ncols * 2.5, nrows * 2.5))
     axs = axs.ravel()
 
     # Slot 0: clean image
@@ -147,18 +158,20 @@ def plot_eigvecs(clean, eigvecs, eigvals, label, out_path, img_shape):
     axs[0].set_title("Clean", fontsize=11)
     axs[0].axis("off")
 
-    # Slots 1..K: eigenvectors
-    for i in range(k):
+    # Slots 1..k_plot: strided eigenvectors
+    for slot, i in enumerate(indices):
         ev = eigvecs[:, i].cpu().numpy().reshape(H, W) if C == 1 else \
              eigvecs[:, i].cpu().numpy().reshape(C, H, W).mean(0)
-        axs[i + 1].imshow(ev, cmap="RdBu", norm=mcolors.CenteredNorm())
-        axs[i + 1].set_title(f"λ{i+1}={eigvals[i].item():.3f}", fontsize=10)
-        axs[i + 1].axis("off")
+        vmax = np.percentile(np.abs(ev), 98)
+        axs[slot + 1].imshow(ev, cmap="RdBu",
+                             norm=mcolors.Normalize(vmin=-vmax, vmax=vmax))
+        axs[slot + 1].set_title(f"λ{i+1}={eigvals[i].item():.3f}", fontsize=10)
+        axs[slot + 1].axis("off")
 
-    for j in range(k + 1, len(axs)):
+    for j in range(k_plot + 1, len(axs)):
         axs[j].axis("off")
 
-    fig.suptitle(f"Harmonic basis — {label}  (σ={NOISE_LEVEL})", fontsize=14,
+    fig.suptitle(f"Harmonic basis — {label}  (σ={noise_level})", fontsize=14,
                  fontweight="bold", y=1.01)
     plt.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -166,7 +179,7 @@ def plot_eigvecs(clean, eigvecs, eigvals, label, out_path, img_shape):
     print(f"  Saved → {out_path}")
 
 
-def plot_comparison(results, out_path):
+def plot_comparison(results, out_path, noise_level=0.3):
     """
     Side-by-side: each model gets one row, showing clean + top-8 eigenvectors.
     results: list of (label, clean, eigvecs, eigvals, img_shape)
@@ -197,12 +210,14 @@ def plot_comparison(results, out_path):
         for col in range(n_show):
             ev = eigvecs[:, col].cpu().numpy()
             ev = ev.reshape(H, W) if C == 1 else ev.reshape(C, H, W).mean(0)
-            axes[row, col + 1].imshow(ev, cmap="RdBu", norm=mcolors.CenteredNorm())
+            vmax = np.percentile(np.abs(ev), 98)
+            axes[row, col + 1].imshow(ev, cmap="RdBu",
+                                      norm=mcolors.Normalize(vmin=-vmax, vmax=vmax))
             axes[row, col + 1].set_title(f"λ{col+1}={eigvals[col].item():.3f}",
                                           fontsize=9)
             axes[row, col + 1].axis("off")
 
-    fig.suptitle(f"Harmonic basis comparison  (σ={NOISE_LEVEL})", fontsize=13,
+    fig.suptitle(f"Harmonic basis comparison  (σ={noise_level})", fontsize=13,
                  fontweight="bold")
     plt.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -212,7 +227,7 @@ def plot_comparison(results, out_path):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def load_model_and_fn(model_dir, noise_level, device):
+def load_model_and_fn(model_dir, noise_level, device, n_iters_sheet=4):
     """Load model, return (config, model_fn, lit_model)."""
     import json
     config, lit = load_lit_model(model_dir, device=device)
@@ -224,7 +239,8 @@ def load_model_and_fn(model_dir, noise_level, device):
             lvl.reset_wnorm()
         sigma = torch.full((1,), noise_level, device=device, dtype=torch.float32)
         def model_fn(x):
-            return net(x, noise_labels=sigma, infer_mode=True, n_iters=N_ITERS_SHEET)
+            return net(x, noise_labels=sigma, infer_mode=True,
+                       n_iters=n_iters_sheet, n_iters_grad=2)
     elif arch == "unet":
         sigma = torch.full((1,), noise_level, device=device, dtype=torch.float32)
         def model_fn(x):
@@ -237,52 +253,55 @@ def load_model_and_fn(model_dir, noise_level, device):
 
 
 def main():
-    torch.manual_seed(VAL_SEED)
+    args = parse_args()
+    torch.manual_seed(args.val_seed)
 
-    model_configs = [
-        ("neural_sheet7", SHEET_DIR),
+    OUT_DIR = Path(args.out_dir)
+    OUT_DIR.mkdir(exist_ok=True)
+
+    UNET_DIR  = Path(args.unet_dir)
+    SHEET_DIR = Path(args.sheet_dir)
+
+    model_configs = [("UNet", UNET_DIR)] if args.unet_only else [
         ("UNet",          UNET_DIR),
+        ("neural_sheet7", SHEET_DIR),
     ]
 
-    # Load one shared val image (same dataset for both)
+    # Load val image from UNet config (works whether unet_only or not)
     print("Loading val image...")
     import json
-    cfg0 = json.load(open(SHEET_DIR / "config.json"))
-    _, _, val_loader, _ = build_loaders_from_config(
-        cfg0, batch_size=8, num_workers=2)
+    cfg0 = json.load(open(UNET_DIR / "config.json"))
+    _, _, val_loader, _ = build_loaders_from_config(cfg0, batch_size=8, num_workers=2)
     clean_batch, _ = next(iter(val_loader))
-    clean = clean_batch[[2]].to(DEVICE)   # single image
-    sigma_t = torch.full((1,), NOISE_LEVEL, device=DEVICE, dtype=clean.dtype)
-    noisy   = clean + torch.randn_like(clean) * NOISE_LEVEL
+    clean = clean_batch[[args.val_img_idx]].to(DEVICE)
+    noisy = clean + torch.randn_like(clean) * args.noise_level
 
     comparison_results = []
 
     for label, model_dir in model_configs:
-        print(f"\n{'='*60}")
-        print(f"  [{label}]")
-        config, model_fn, net = load_model_and_fn(model_dir, NOISE_LEVEL, DEVICE)
+        print(f"\n{'='*60}\n  [{label}]")
+        config, model_fn, net = load_model_and_fn(model_dir, args.noise_level, DEVICE,
+                                                   n_iters_sheet=args.n_iters_sheet)
 
         img_size  = config.get("img_size", 64)
         grayscale = config.get("grayscale", False)
         C = 1 if grayscale else 3
         img_shape = (C, img_size, img_size)
-        n = C * img_size * img_size
 
-        # noisy input for this model
         noisy_m = noisy[:, :C].to(DEVICE)
         if noisy_m.shape[-1] != img_size:
             import torch.nn.functional as F
             noisy_m = F.interpolate(noisy_m, size=(img_size, img_size), mode="bilinear")
 
-        print(f"  Input: {noisy_m.shape}  n={n}")
-        l_total = K + N_OVERSAMPLING
-        print(f"  Running randomized SVD  "
-              f"(k={K}, oversampling={N_OVERSAMPLING}, power_iters={N_POWER_ITER})")
-        print(f"  Total VJP calls ≈ {2 * l_total * (N_POWER_ITER * 2 + 2)}")
+        l_total = args.k + args.n_oversampling
+        print(f"  Input: {noisy_m.shape}  "
+              f"Running randomized SVD (k={args.k}, oversampling={args.n_oversampling}, "
+              f"power_iters={args.n_power_iter})")
+        print(f"  Total VJP calls ≈ {2 * l_total * (args.n_power_iter * 2 + 2)}")
 
         eigvecs, eigvals = randomized_svd_denoiser(
             model_fn, noisy_m,
-            k=K, n_oversampling=N_OVERSAMPLING, n_power_iter=N_POWER_ITER,
+            k=args.k, n_oversampling=args.n_oversampling, n_power_iter=args.n_power_iter,
         )
         print(f"  eigvals range: {eigvals[-1].item():.4f} … {eigvals[0].item():.4f}")
 
@@ -293,10 +312,12 @@ def main():
 
         plot_eigvecs(clean_m, eigvecs, eigvals, label,
                      OUT_DIR / f"harmonic_basis_{label.replace(' ', '_')}.png",
-                     img_shape)
+                     img_shape, stride=args.k_plot_stride, noise_level=args.noise_level)
         comparison_results.append((label, clean_m, eigvecs, eigvals, img_shape))
 
-    plot_comparison(comparison_results, OUT_DIR / "harmonic_basis_comparison.png")
+    if not args.unet_only:
+        plot_comparison(comparison_results, OUT_DIR / "harmonic_basis_comparison.png",
+                        noise_level=args.noise_level)
     print("\nAll done.")
 
 

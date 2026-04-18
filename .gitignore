@@ -21,17 +21,21 @@ figures/
 # ----------------------------------------------------
 # Pretrained Model exclusions and specific inclusions
 # ----------------------------------------------------
-# 1. Ignore everything in pretrained_model
+# 1. Ignore everything in pretrained_model by default
 pretrained_model/*
 
-# 2. Allow the scaling-new-face folder, but ignore its contents...
+# 2. scaling-new-face: allow folder + specific checkpoints
 !pretrained_model/scaling-new-face/
 pretrained_model/scaling-new-face/*
-# ...except the specific checkpoint
+!pretrained_model/scaling-new-face/00006_layer1_unet_small_edm_large_noattn/
+!pretrained_model/scaling-new-face/00024_simplify_layer1_neural_sheet7_intra_film_scalar_mul_ff_scale_large_large_noise/
 !pretrained_model/scaling-new-face/00026_simplify_layer1_neural_sheet7_intra_film_scalar_mul_ff_scale_large_large_noise_simple_control/
+!pretrained_model/scaling-new-face/00027_simplify_layer1_neural_sheet7_intra_film_scalar_mul_ff_scale_large_small_noise_long_iter/
+!pretrained_model/scaling-new-face/00028_simplify_layer1_neural_sheet7_intra_film_scalar_mul_ff_scale_large_large_noise_swilu/
+!pretrained_model/scaling-new-face/00029_layer1_unet_small_edm_large_noattn/
 
-# 3. Allow the scaling-VH-new-2 folder, but ignore its contents...
+# 3. scaling-VH-new-2: allow folder + specific checkpoints
 !pretrained_model/scaling-VH-new-2/
 pretrained_model/scaling-VH-new-2/*
-# ...except the specific checkpoint
-!pretrained_model/scaling-VH-new-2/00005_simple_sheet7_simple_control_small_noise/
+!pretrained_model/scaling-VH-new-2/00008_simple_sheet7_simple_control_small_noise_long_iter/
+!pretrained_model/scaling-VH-new-2/00033_layer1_unet_small_edm_noatt/

@@ -82,6 +82,7 @@ def fit_all_levels_gabor_bank(
     ff_threshold=1.0,
     unit_norm=True,
     use_color=True,
+    levels = None 
 ):
     """
     Fit Gabor envelopes for every decoder level of *net*.
@@ -104,7 +105,9 @@ def fit_all_levels_gabor_bank(
     fit_by_level = {}
     print(f"Starting multi-level Gabor fit (ff_threshold={ff_threshold})...")
 
-    for level_idx in range(net.n_levels):
+    if levels is None:
+        levels = range(net.n_levels)
+    for level_idx in levels:
         fit_bank = fit_decoder_level_gabor_bank(
             model_net=net,
             level_idx=level_idx,
@@ -181,12 +184,12 @@ def plot_gabor_diagnostic_grid(
     save_path : str or Path or None  if given, save instead of showing
     """
     base_kernel_size = net.levels[0].decoder.conv.weight.shape[-1]
-    target_size = base_kernel_size * (2 ** (net.n_levels - 1))
+    target_size = base_kernel_size * (2 ** (len(fit_by_level) - 1))
     final_target_size = target_size * render_scale
 
     orig_list, rec_list, needle_data_list = [], [], []
 
-    for level_idx in range(net.n_levels):
+    for level_idx in range(len(fit_by_level)):
         conv = net.levels[level_idx].decoder.conv
         dictionary = (
             conv.weight_v.detach().cpu().float()

@@ -516,6 +516,7 @@ class neural_sheet7(nn.Module):
         ablate_noi=None,
         ablate_mode="spatial_mean",
         measurement = None, # (measurement, operator : image -> measurement)
+        n_iters_grad = None,
     ):
         bsz = x.shape[0]
         if T is None:
@@ -548,6 +549,8 @@ class neural_sheet7(nn.Module):
 
         if infer_mode:
             n0 = n_iters
+            if n_iters_grad is not None:
+                m1 = n_iters_grad
         history = [] if return_history else None
         if n0 > 0:
             with torch.no_grad():
@@ -2005,7 +2008,7 @@ class ToySCDEQ(nn.Module):
         emb = F.relu(self.map_layer0(emb))
         return (1.0 + torch.tanh(self.affines(emb))) * 2.0
 
-    def forward(self, x: torch.Tensor, noise_labels: torch.Tensor = None, return_feature=False, **kwargs):
+    def forward(self, x: torch.Tensor, noise_labels: torch.Tensor = None, return_feature=False,return_history=False, **kwargs):
         # 1. Store the original shape for the final reconstruction
         original_shape = x.shape
         bsz = original_shape[0]
@@ -2029,9 +2032,25 @@ class ToySCDEQ(nn.Module):
         n0 = sample_uniformly_with_long_tail(self.jfb_no_grad_iters[0], self.jfb_no_grad_iters[1])
         m1 = random.randint(self.jfb_with_grad_iters[0], self.jfb_with_grad_iters[1])
         
+        decoded_hist = []
+        a_hist = []
+
+        # Track history ONLY in the n0 (no_grad) loop
         with torch.no_grad():
             for _ in range(n0):
                 a = self.sc_net(x, a, noise_emb)
+                
+                if return_history:
+                    # Safe to append directly; no_grad guarantees no memory leaks here
+                    a_hist.append(a)
+                    
+                    # Decode and reshape the intermediate state
+                    step_decoded = self.sc_net.Phi(a)
+                    if len(original_shape) > 2:
+                        step_decoded = step_decoded.view(original_shape)
+                    decoded_hist.append(step_decoded)
+
+                
         for _ in range(m1):
             a = self.sc_net(x, a, noise_emb)
 
@@ -2044,6 +2063,12 @@ class ToySCDEQ(nn.Module):
         if len(original_shape) > 2:
             decoded = decoded.view(original_shape)
 
+        if return_history:
+            if return_feature:
+                return decoded, a, decoded_hist, a_hist
+            return decoded, decoded_hist, a_hist
+
         if return_feature:
             return decoded, a
+            
         return decoded
