@@ -116,6 +116,110 @@ Visualizes multiple distinct signal distributions that can arise on the manifold
 
 ---
 
+## Figure 3 — Comparison: Recurrent Sheet vs. Standard UNet
+
+### 3.A — PSNR Curve (`comparison_psnr_curve.png`)
+
+Denoising PSNR vs. noise level σ (log–log) for both models evaluated on the CelebA validation set.
+
+**Output:** `figures/comparison_psnr_curve.png`
+
+**Code:** `run_model_comparison.py`
+
+```bash
+python run_model_comparison.py
+```
+
+Key options (edit constants at the top of the file):
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `SHEET_DIR` | `pretrained_model/scaling-new-face/00026_...` | neural_sheet7 model directory |
+| `UNET_DIR` | `pretrained_model/scaling-new-face/00006_...` | UNet model directory |
+| `N_ITERS_SHEET` | `8` | Recurrent iterations for neural_sheet7 |
+| `MAX_BATCHES` | `20` | Val batches to average over |
+
+---
+
+### 3.B — Generation Comparison (`comparison_generation.png`)
+
+Side-by-side random samples from UNet and neural_sheet7, generated via annealed Heun ODE sampler starting from the mean training image plus Gaussian noise.
+
+**Output:** `figures/comparison_generation.png`
+
+**Code:** `run_model_comparison.py` (same script as 3.A — both figures are produced in one run)
+
+```bash
+python run_model_comparison.py
+```
+
+---
+
+### 3.C — Generation Trajectory (`comparison_generation_trajectory.png`)
+
+Full denoising trajectories for both models: each row is one sample, columns show evenly-spaced ODE steps from σ_max to the final denoised image.
+
+**Output:** `figures/comparison_generation_trajectory.png`
+
+**Code:** `run_generation_trajectory.py`
+
+```bash
+python run_generation_trajectory.py
+```
+
+Key options (edit constants at the top of the file):
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `N_TRAJ_SAMPLES` | `4` | Number of sample rows per model |
+| `N_TRAJ_SHOW` | `9` | Intermediate steps shown per row |
+| `N_ITERS_DENOISE` | `4` | Recurrent iterations for neural_sheet7 |
+
+---
+
+### 3.D — Simplicity Bias Comparison (`simplicity_bias_combined.png`)
+
+Both models ranked together: training faces + OOD shape stimuli sorted by estimated log-likelihood. Shows that both models assign higher likelihood to simpler, out-of-distribution stimuli.
+
+**Output:** `figures/simplicity_bias_combined.png`
+
+**Code:** `run_simplicity_bias_combined.py`
+
+```bash
+python run_simplicity_bias_combined.py
+```
+
+Key options:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--sheet_dir` | `pretrained_model/scaling-new-face/00026_...` | neural_sheet7 model directory |
+| `--unet_dir` | `pretrained_model/scaling-VH-new-2/00033_...` | UNet model directory |
+| `--n_train_imgs` | `300` | Number of training faces to include in ranking |
+| `--stim_dir` | `stimulus` | Directory with shape stimuli |
+
+---
+
+### 3.E — Harmonic Basis Comparison (`harmonic_basis_neural_sheet7.png` + `harmonic_basis_UNet.png`)
+
+Top eigenvectors of the denoiser Jacobian for both models shown side by side. neural_sheet7 eigenvectors tend to be more spatially localized than UNet's smooth low-frequency basis.
+
+**Outputs:** `figures/harmonic_basis_UNet.png`, `figures/harmonic_basis_neural_sheet7.png`, `figures/harmonic_basis_comparison.png`
+
+**Code:** `run_harmonic_basis.py`
+
+```bash
+python run_harmonic_basis.py
+```
+
+Key options:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--unet_dir` | `pretrained_model/scaling-new-face/00029_...` | UNet model directory |
+| `--sheet_dir` | `pretrained_model/scaling-new-face/00024_...` | neural_sheet7 model directory |
+| `--noise_level` | `0.3` | Noise level at which to compute eigenvectors |
+| `--k` | `100` | Number of eigenvectors to compute |
+| `--n_power_iter` | `10` | Power iteration steps (more = more accurate) |
+
+---
+
 ## Directory Structure
 
 ```
@@ -129,6 +233,12 @@ recurrent_diffusion_minimal/
 │   ├── model.py               # neural_sheet7 and UNet architectures
 │   ├── needle_plot.py         # Gabor fitting and overlay rendering
 │   └── utils.py               # Model loading utilities
-├── run_harmonic_basis.py      # Figure 1.A
-└── run_simplicity_bias_combined.py  # Figure 1.B
+├── run_harmonic_basis.py      # Figures 1.A, 3.E
+├── run_simplicity_bias_combined.py  # Figures 1.B, 3.D
+├── run_model_comparison.py    # Figures 3.A, 3.B
+├── run_generation_trajectory.py    # Figure 3.C
+├── run_denoising_history.py   # Figure 3 (denoising history + Gabor overlay)
+├── run_contour_experiments.py # Figure 5
+├── run_ff_scale_sweep.py      # Causal intervention: feedforward scale sweep
+└── run_noise_label_sweep.py   # Causal intervention: noise label sweep
 ```

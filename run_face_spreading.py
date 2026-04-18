@@ -31,8 +31,8 @@ from generalization_plots import (
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BASE_DIR = Path("/home/zeyu/recurrent_diffusion_minimal/pretrained_model/"
-                "scaling-new-face/00026_simplify_layer1_neural_sheet7_intra_"
+BASE_DIR = Path("pretrained_model/scaling-new-face/"
+                "00026_simplify_layer1_neural_sheet7_intra_"
                 "film_scalar_mul_ff_scale_large_large_noise_simple_control")
 OUT_DIR  = Path("figures")
 OUT_DIR.mkdir(exist_ok=True)

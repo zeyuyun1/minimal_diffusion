@@ -25,8 +25,10 @@ from tqdm import tqdm
 from recurrent_diffusion_pkg.utils import load_lit_model, build_loaders_from_config
 
 # ── Experiment paths ──────────────────────────────────────────────────────────
-SHEET_DIR = Path("/home/zeyu/recurrent_diffusion_minimal/pretrained_model/scaling-new-face/00026_simplify_layer1_neural_sheet7_intra_film_scalar_mul_ff_scale_large_large_noise_simple_control")
-UNET_DIR  = Path("/home/zeyu/recurrent_diffusion_minimal/pretrained_model/scaling-new-face/00006_layer1_unet_small_edm_large_noattn")
+SHEET_DIR = Path("pretrained_model/scaling-new-face/"
+                 "00026_simplify_layer1_neural_sheet7_intra_film_scalar_mul_ff_scale_large_large_noise_simple_control")
+UNET_DIR  = Path("pretrained_model/scaling-new-face/"
+                 "00006_layer1_unet_small_edm_large_noattn")
 
 # ── Denoising eval settings ───────────────────────────────────────────────────
 NOISE_LEVELS   = [0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.2, 2.0, 3.0]
