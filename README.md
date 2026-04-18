@@ -220,6 +220,34 @@ Key options:
 
 ---
 
+---
+
+## Figure 5 — Decomposition of the Harmonic Basis
+
+The harmonic basis (Jacobian eigenvectors from Figure 1.A / 3.E) measures how a pixel perturbation propagates through the model. Here we show that this Jacobian calculation decomposes into perturbations in the **latent space** — specifically, each eigenvector corresponds to how a single Gabor filter's activation spreads to neighbouring neurons under the model's learned lateral connections.
+
+This equivalence is visualised concretely: a target neuron near the circle boundary is identified, and we show how its activation pattern spreads across the image under the recurrent dynamics, producing the same structured, contour-following pattern as a pixel-space Jacobian eigenvector.
+
+**Output:** `figures/gen_combined_shape_Circle_perturbed.png`
+
+**Code:** `run_contour_experiments.py`
+
+```bash
+python run_contour_experiments.py
+```
+
+**Model:** `pretrained_model/scaling-VH-new-2/00008_simple_sheet7_simple_control_small_noise_long_iter`
+
+Key options (edit constants at the top of the file):
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `BASE_DIR` | `pretrained_model/scaling-VH-new-2/00008_...` | Model directory |
+| `STIMULI` | `["shape_Circle_perturbed"]` | List of stimulus stems to process |
+| `NOISE_LEVEL` | `0.4` | Noise level for denoising |
+| `N_ITERS` | `8` | Recurrent iterations |
+
+---
+
 ## Directory Structure
 
 ```
@@ -237,8 +265,9 @@ recurrent_diffusion_minimal/
 ├── run_simplicity_bias_combined.py  # Figures 1.B, 3.D
 ├── run_model_comparison.py    # Figures 3.A, 3.B
 ├── run_generation_trajectory.py    # Figure 3.C
-├── run_denoising_history.py   # Figure 3 (denoising history + Gabor overlay)
+├── run_denoising_history.py   # Denoising history + Gabor overlay
 ├── run_contour_experiments.py # Figure 5
 ├── run_ff_scale_sweep.py      # Causal intervention: feedforward scale sweep
-└── run_noise_label_sweep.py   # Causal intervention: noise label sweep
+├── run_noise_label_sweep.py   # Causal intervention: noise label sweep
+└── run_pyramid_corruption.py  # Causal intervention: pyramid-level boundary corruption
 ```
